@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Swing Trader App</title>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Function to show a custom message box (defined globally for accessibility)
+        function showMessage(message, type = 'warning') {
+            const messageBox = document.getElementById('messageBox');
+            const messageText = document.getElementById('messageText');
+            if (messageBox && messageText) {
+                messageText.textContent = message;
+                messageBox.className = 'message-box'; // Reset classes
+                if (type === 'error') {
+                    messageBox.classList.add('bg-red-100', 'text-red-800', 'border-red-400');
+                } else if (type === 'success') {
+                    messageBox.classList.add('bg-green-100', 'text-green-800', 'border-green-400');
+                } else { // Default to warning
+                    messageBox.classList.add('bg-yellow-100', 'text-yellow-800', 'border-yellow-400');
+                }
+                messageBox.style.display = 'block';
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 5000); // Hide after 5 seconds
+            } else {
+                console.warn("Message box elements not found:", message);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            let db;
+            let auth;
+            let userId;
+            let isAuthReady = false;
+
+            // Data arrays (will be populated from Firestore)
+            let initialBalance = 0;
+            let trades = [];
+            let withdrawals = [];
+            let plannedTrades = [];
+            let tradeQuestions = [];
+
+            // Temporary storage for planned trade being added/edited
+            let currentPlannedTradeToEdit = null;
+
+            // DOM elements - assigned AFTER DOMContentLoaded to ensure they exist
+            const initialBalanceInput = document.getElementById('initialBalanceInput');
+            const setInitialBalanceBtn = document.getElementById('setInitialBalanceBtn');
+            const availableBalanceDisplay = document.getElementById('availableBalanceDisplay');
+            const investedBalanceDisplay = document.getElementById('investedBalanceDisplay');
+            const totalWithdrawalsDisplay = document.getElementById('totalWithdrawalsDisplay');
+            const userIdDisplay = document.getElementById('userIdDisplay'); // Get reference to userIdDisplay
+
+            const withdrawalAmountInput = document.getElementById('withdrawalAmountInput');
+            const recordWithdrawalBtn = document.getElementById('recordWithdrawalBtn');
+            const viewWithdrawalHistoryBtn = document.getElementById('viewWithdrawalHistoryBtn');
+            const withdrawalHistoryModal = document.getElementById('withdrawalHistoryModal');
+            const withdrawalList = document.getElementById('withdrawalList');
+            const closeWithdrawalHistoryBtn = document.getElementById('closeWithdrawalHistoryBtn');
+
+            const tradeStockSymbol = document.getElementById('tradeStockSymbol');
+            const tradeBuyPrice = document.getElementById('tradeBuyPrice');
+            const tradeQuantity = document.getElementById('tradeQuantity');
+            const tradeBuyFee = document.getElementById('tradeBuyFee');
+            const tradeDate = document.getElementById('tradeDate');
+            const addTradeBtn = document.getElementById('addTradeBtn');
+
+            const openTradeList = document.getElementById('openTradeList');
+            const closedTradeList = document.getElementById('closedTradeList');
+            const openTradesTab = document.getElementById('openTradesTab');
+            const closedTradesTab = document.getElementById('closedTradesTab');
+            const openTradesSection = document.getElementById('openTradesSection');
+            const closedTradesSection = document.getElementById('closedTradesSection');
+            const totalProfitLossDisplay = document.getElementById('totalProfitLoss');
+            const totalTaxPaidDisplay = document.getElementById('totalTaxPaid');
+
+            const sellModal = document.getElementById('sellModal');
+            const modalSymbol = document.getElementById('modalSymbol');
+            const modalQuantity = document.getElementById('modalQuantity');
+            const modalSellPrice = document.getElementById('modalSellPrice');
+            const modalSellFee = document.getElementById('modalSellFee');
+            const modalSellDate = document.getElementById('modalSellDate');
+            const cancelSellBtn = document.getElementById('cancelSellBtn');
+            const confirmSellBtn = document.getElementById('confirmSellBtn');
+
+            const editModal = document.getElementById('editModal');
+            const editTradeId = document.getElementById('editTradeId');
+            const editSymbol = document.getElementById('editSymbol');
+            const editBuyPrice = document.getElementById('editBuyPrice');
+            const editQuantity = document.getElementById('editQuantity');
+            const editBuyFee = document.getElementById('editBuyFee');
+            const editTradeDate = document.getElementById('editTradeDate');
+            const editSellPrice = document.getElementById('editSellPrice');
+            // Corrected erroneous assignment: do not overwrite the global `document` object
+            const editSellFee = document.getElementById('editSellFee');
+            const editSellDate = document.getElementById('editSellDate');
+            const editExitStrategy = document.getElementById('editExitStrategy');
+            const editSellPriceGroup = document.getElementById('editSellPriceGroup');
+            const editSellFeeGroup = document.getElementById('editSellFeeGroup');
+            const editSellDateGroup = document.getElementById('editSellDateGroup');
+            const editExitStrategyGroup = document.getElementById('editExitStrategyGroup');
+            const cancelEditBtn = document.getElementById('cancelEditBtn');
+            const confirmEditBtn = document.getElementById('confirmEditBtn');
+
+            const plannedCompanyInput = document.getElementById('plannedCompany');
+            const plannedEntryPriceInput = document.getElementById('plannedEntryPrice');
+            const plannedExitPriceInput = document.getElementById('plannedExitPrice');
+            const plannedQuantityInput = document.getElementById('plannedQuantity');
+            const addPlannedTradeBtn = document.getElementById('addPlannedTradeBtn');
+            const plannedTradeList = document.getElementById('plannedTradeList');
+            const totalPlannedInvestedDisplay = document.getElementById('totalPlannedInvestedDisplay');
+            const availableForPlannedInvestmentDisplay = document.getElementById('availableForPlannedInvestmentDisplay');
+
+            const plannedTradeQuestionsModal = document.getElementById('plannedTradeQuestionsModal');
+            const questionsContainer = document.getElementById('questionsContainer');
+            const cancelQuestionsBtn = document.getElementById('cancelQuestionsBtn');
+            const confirmQuestionsBtn = document.getElementById('confirmQuestionsBtn');
+
+            const manageQuestionsBtn = document.getElementById('manageQuestionsBtn');
+            const manageQuestionsModal = document.getElementById('manageQuestionsModal');
+            const currentQuestionsList = document.getElementById('currentQuestionsList');
+            const newQuestionInput = document.getElementById('newQuestionInput');
+            const addNewQuestionBtn = document.getElementById('addNewQuestionBtn');
+            const cancelManageQuestionsBtn = document.getElementById('cancelManageQuestionsBtn');
+            const saveQuestionsBtn = document.getElementById('saveQuestionsBtn');
+
+            // Define a safe application ID.  When running outside of the Canvas environment
+            // the global `__app_id` may be undefined.  Use a fallback so that document paths
+            // are always valid.  Without this the code would generate undefined paths when
+            // interacting with Firestore collections (for example when selling or editing a trade).
+            const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+            try {
+                // ZDE VLOŽ SVOU firebaseConfig Z KROKU 1.3
+                // Příklad:
+                const firebaseConfig = {
+                  apiKey: "AIzaSyC54QRT-WNT8Cmqk61HzjyFYAASSmWg",
+                  authDomain: "swing-app-e391c.firebaseapp.com",
+                  projectId: "swing-app-e391c",
+                  storageBucket: "swing-app-e391c.appspot.com",
+                  messagingSenderId: "262459838769",
+                  appId: "1:262459838769:web:997c7a1a7eb4bb5866ea6d2c",
+                  measurementId: "G-XX0VX8NL5J"
+                };
+                // Původní řádek: const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+
+
+                if (!firebaseConfig || !firebaseConfig.apiKey) {
+                    console.error("Firebase configuration is missing or invalid. Data will not be saved to Firestore.");
+                    showMessage("Chyba: Firebase konfigurace chybí. Data nebudou uložena do cloudu.", "error");
+                    return;
+                }
+
+                const firebaseApp = initializeApp(firebaseConfig);
+                db = getFirestore(firebaseApp);
+                auth = getAuth(firebaseApp);
+
+                // Původní kód:
+                // if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                //     await signInWithCustomToken(auth, __initial_auth_token);
+                // } else {
+                //     await signInAnonymously(auth);
+                // }
+                // NOVÝ KÓD:
+                await signInAnonymously(auth); // Pro GitHub Pages se přihlašujeme anonymně
+
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        if (userIdDisplay) userIdDisplay.textContent = `Uživatel: ${userId}`; // Check if element exists
+                        loadDataFromFirestore();
+                        attachAllEventListenersToDomElements(); // Call this function here
+                        showMessage("Úspěšně připojeno k cloudu. Data se načítají...", "success");
+                    } else {
+                        userId = null;
+                        isAuthReady = true;
+                        if (userIdDisplay) userIdDisplay.textContent = `Uživatel: Nepřihlášen`; // Check if element exists
+                        showMessage("Nepřihlášeno k Firebase. Data nebudou uložena do cloudu.", "warning");
+                    }
+                });
+
+            } catch (error) {
+                console.error("Error initializing Firebase:", error);
+                showMessage("Chyba při inicializaci Firebase. Data nebudou uložena do cloudu.", "error");
+            }
+
+            // Function to load all data from Firestore
+            async function loadDataFromFirestore() {
+                if (!isAuthReady || !userId) {
+                    console.warn("Firebase not ready or user not authenticated. Cannot load data.");
+                    return;
+                }
+
+                // __app_id je proměnná poskytovaná prostředím Canvasu.
+                // Pro GitHub Pages si ji můžeš definovat pevně, nebo ji nechat jako 'default-app-id'.
+                // Pro účely GitHub Pages je bezpečné ji nechat jako 'default-app-id',
+                // protože tvá data jsou chráněna tvým userId.
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                onSnapshot(doc(db, `artifacts/${appId}/users/${userId}/initialBalance`, 'balance'), (docSnap) => {
+                    if (docSnap.exists()) {
+                        initialBalance = docSnap.data().amount || 0;
+                        if (initialBalanceInput) initialBalanceInput.value = initialBalance;
+                    } else {
+                        initialBalance = 86364;
+                        if (initialBalanceInput) initialBalanceInput.value = initialBalance;
+                        setDoc(doc(db, `artifacts/${appId}/users/${userId}/initialBalance`, 'balance'), { amount: initialBalance });
+                    }
+                    updateSummary();
+                }, (error) => {
+                    console.error("Error fetching initial balance:", error);
+                    showMessage("Chyba při načítání počátečního zůstatku.", "error");
+                });
+
+                onSnapshot(collection(db, `artifacts/${appId}/users/${userId}/trades`), (snapshot) => {
+                    trades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    renderTrades();
+                    updateSummary();
+                }, (error) => {
+                    console.error("Error fetching trades:", error);
+                    showMessage("Chyba při načítání obchodů.", "error");
+                });
+
+                onSnapshot(collection(db, `artifacts/${appId}/users/${userId}/withdrawals`), (snapshot) => {
+                    withdrawals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    renderWithdrawalHistory();
+                    updateSummary();
+                }, (error) => {
+                    console.error("Error fetching withdrawals:", error);
+                    showMessage("Chyba při načítání výběrů.", "error");
+                });
+
+                onSnapshot(collection(db, `artifacts/${appId}/users/${userId}/plannedTrades`), (snapshot) => {
+                    plannedTrades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    renderPlannedTrades();
+                    updateSummary();
+                }, (error) => {
+                    console.error("Error fetching planned trades:", error);
+                    showMessage("Chyba při načítání plánovaných obchodů.", "error");
+                });
+
+                onSnapshot(doc(db, `artifacts/${appId}/users/${userId}/tradeQuestions`, 'questions'), (docSnap) => {
+                    if (docSnap.exists()) {
+                        tradeQuestions = docSnap.data().list || [];
+                    } else {
+                        tradeQuestions = [
+                            { id: crypto.randomUUID(), text: "Akcie v dlouhodobém růstu?" },
+                            { id: crypto.randomUUID(), text: "Akcie dnes v růstu?" },
+                            { id: crypto.randomUUID(), text: "Kupuješ bez emocí a bez FOMO?" },
+                            { id: crypto.randomUUID(), text: "Je to opak padajícího nože?" },
+                            { id: crypto.randomUUID(), text: "Kupuješ v pullbacku v růstovém trendu?" },
+                            { id: crypto.randomUUID(), text: "Máš ze vstupu dobrý pocit?" },
+                            { id: crypto.randomUUID(), text: "Nastavuješ STOPLOSS-u rizikových firem na ztrátu max. 25usd a u kvalitních firem (Nvidia..) v růstu na 150usd?" }
+                        ];
+                        setDoc(doc(db, `artifacts/${appId}/users/${userId}/tradeQuestions`, 'questions'), { list: tradeQuestions });
+                    }
+                    renderManageQuestionsModal();
+                }, (error) => {
+                    console.error("Error fetching trade questions:", error);
+                    showMessage("Chyba při načítání otázek pro plánované obchody.", "error");
+                });
+            }
+
+            // Function to calculate potential profit for open trades
+            function calculatePotentialProfit(buyPrice, quantity, buyFee, exitStrategy) {
+                if (isNaN(buyPrice) || isNaN(quantity) || isNaN(buyFee) || isNaN(exitStrategy) || exitStrategy <= 0) {
+                    return 0;
+                }
+                const grossProfit = (exitStrategy - buyPrice) * quantity;
+                return grossProfit - (buyFee || 0) - (buyFee || 0);
+            }
+
+            // Function to calculate planned profit
+            function calculatePlannedProfit(entryPrice, exitPrice, quantity) {
+                if (isNaN(entryPrice) || isNaN(exitPrice) || isNaN(quantity) || entryPrice <= 0 || exitPrice <= 0 || quantity <= 0) {
+                    return 0;
+                }
+                return (exitPrice - entryPrice) * quantity;
+            }
+
+            // Function to update all summary displays
+            function updateSummary() {
+                let totalRealizedPL = 0;
+                let totalInvestedInOpenTrades = 0;
+                let totalPlannedInvested = 0;
+
+                trades.forEach(trade => {
+                    if (trade.status === 'closed') {
+                        totalRealizedPL += trade.profitLoss;
+                    } else if (trade.status === 'open') {
+                        totalInvestedInOpenTrades += trade.costBasis;
+                    }
+                });
+
+                plannedTrades.forEach(plannedTrade => {
+                    totalPlannedInvested += (plannedTrade.entryPrice * plannedTrade.quantity) || 0;
+                });
+
+                let totalTax = 0;
+                if (totalRealizedPL > 0) {
+                    totalTax = totalRealizedPL * 0.15;
+                }
+
+                const totalWithdrawals = withdrawals.reduce((sum, withdrawal) => sum + withdrawal.amount, 0);
+
+                const currentAvailableBalance = initialBalance - totalWithdrawals - totalInvestedInOpenTrades;
+                const availableForPlannedInvestment = currentAvailableBalance - totalPlannedInvested;
+
+                if (availableBalanceDisplay) availableBalanceDisplay.textContent = `$${currentAvailableBalance.toFixed(2)}`;
+                if (investedBalanceDisplay) investedBalanceDisplay.textContent = `$${totalInvestedInOpenTrades.toFixed(2)}`;
+                if (totalProfitLossDisplay) {
+                    totalProfitLossDisplay.textContent = `$${totalRealizedPL.toFixed(2)}`;
+                    totalProfitLossDisplay.classList.remove('profit', 'loss');
+                    if (totalRealizedPL >= 0) {
+                        totalProfitLossDisplay.classList.add('profit');
+                    } else {
+                        totalProfitLossDisplay.classList.add('loss');
+                    }
+                }
+                if (totalTaxPaidDisplay) totalTaxPaidDisplay.textContent = `$${totalTax.toFixed(2)}`;
+                if (totalWithdrawalsDisplay) totalWithdrawalsDisplay.textContent = `$${totalWithdrawals.toFixed(2)}`;
+                if (totalPlannedInvestedDisplay) totalPlannedInvestedDisplay.textContent = `$${totalPlannedInvested.toFixed(2)}`;
+                if (availableForPlannedInvestmentDisplay) availableForPlannedInvestmentDisplay.textContent = `$${availableForPlannedInvestment.toFixed(2)}`;
+            }
+
+            // Render functions
+            function renderTrades() {
+                if (!openTradeList || !closedTradeList) return; // Ensure elements exist
+
+                openTradeList.innerHTML = '';
+                closedTradeList.innerHTML = '';
+
+                const openTrades = trades.filter(trade => trade.status === 'open');
+                const closedTrades = trades.filter(trade => trade.status === 'closed');
+
+                if (openTrades.length === 0) {
+                    openTradeList.innerHTML = `<tr><td colspan="9" class="text-center text-gray-500 py-4">Žádné otevřené obchody.</td></tr>`;
+                } else {
+                    openTrades.forEach((trade) => {
+                        const potentialProfit = calculatePotentialProfit(trade.buyPrice, trade.quantity, trade.buyFee, trade.exitStrategy);
+                        const profitClass = potentialProfit >= 0 ? 'profit' : 'loss';
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${trade.symbol}</td>
+                            <td>$${trade.buyPrice.toFixed(2)}</td>
+                            <td>${trade.quantity}</td>
+                            <td>$${(trade.buyFee || 0).toFixed(2)}</td>
+                            <td>$${(trade.costBasis || 0).toFixed(2)}</td>
+                            <td>${trade.date}</td>
+                            <td><input type="number" class="exit-strategy-input p-2 border rounded-md w-24" data-trade-id="${trade.id}" value="${trade.exitStrategy !== null ? trade.exitStrategy : ''}" step="0.01"></td>
+                            <td class="${profitClass}">$${potentialProfit.toFixed(2)}</td>
+                            <td>
+                                <button data-id="${trade.id}" class="text-blue-500 hover:text-blue-700 font-semibold sell-trade-btn mr-2">Prodat</button>
+                                <button data-id="${trade.id}" class="text-indigo-500 hover:text-indigo-700 font-semibold edit-trade-btn mr-2">Upravit</button>
+                                <button data-id="${trade.id}" class="text-red-500 hover:text-red-700 font-semibold delete-trade-btn">Smazat</button>
+                            </td>
+                        `;
+                        openTradeList.appendChild(row);
+                    });
+                }
+
+                if (closedTrades.length === 0) {
+                    closedTradeList.innerHTML = `<tr><td colspan="10" class="text-center text-gray-500 py-4">Žádné uzavřené obchody.</td></tr>`;
+                } else {
+                    closedTrades.forEach((trade) => {
+                        const profitLossClass = trade.profitLoss >= 0 ? 'profit' : 'loss';
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${trade.symbol}</td>
+                            <td>$${trade.buyPrice.toFixed(2)}</td>
+                            <td>$${trade.sellPrice.toFixed(2)}</td>
+                            <td>${trade.quantity}</td>
+                            <td>$${((trade.buyFee || 0) + (trade.sellFee || 0)).toFixed(2)}</td>
+                            <td class="${profitLossClass}">$${trade.profitLoss.toFixed(2)}</td>
+                            <td>$${(trade.tax || 0).toFixed(2)}</td>
+                            <td>${trade.date}</td>
+                            <td>${trade.sellDate}</td>
+                            <td>
+                                <button data-id="${trade.id}" class="text-indigo-500 hover:text-indigo-700 font-semibold edit-trade-btn mr-2">Upravit</button>
+                                <button data-id="${trade.id}" class="text-red-500 hover:text-red-700 font-semibold delete-trade-btn-closed">Smazat</button>
+                            </td>
+                        `;
+                        closedTradeList.appendChild(row);
+                    });
+                }
+                attachEventListeners();
+            }
+
+            function renderPlannedTrades() {
+                if (!plannedTradeList) return; // Ensure element exists
+
+                plannedTradeList.innerHTML = '';
+                if (plannedTrades.length === 0) {
+                    plannedTradeList.innerHTML = `<tr><td colspan="7" class="text-center text-gray-500 py-4">Žádné plánované obchody.</td></tr>`;
+                } else {
+                    plannedTrades.forEach(plannedTrade => {
+                        const plannedProfit = calculatePlannedProfit(plannedTrade.entryPrice, plannedTrade.exitPrice, plannedTrade.quantity);
+                        const profitClass = plannedProfit >= 0 ? 'profit' : 'loss';
+                        const investedAmount = plannedTrade.entryPrice * plannedTrade.quantity;
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${plannedTrade.company}</td>
+                            <td>$${plannedTrade.entryPrice.toFixed(2)}</td>
+                            <td>$${plannedTrade.exitPrice.toFixed(2)}</td>
+                            <td>${plannedTrade.quantity}</td>
+                            <td>$${investedAmount.toFixed(2)}</td>
+                            <td class="${profitClass}">$${plannedProfit.toFixed(2)}</td>
+                            <td>
+                                <button data-id="${plannedTrade.id}" class="text-indigo-500 hover:text-indigo-700 font-semibold edit-planned-trade-btn mr-2">Upravit</button>
+                                <button data-id="${plannedTrade.id}" class="text-red-500 hover:text-red-700 font-semibold delete-planned-trade-btn">Smazat</button>
+                            </td>
+                        `;
+                        plannedTradeList.appendChild(row);
+                    });
+                }
+                attachPlannedTradeEventListeners();
+                updateSummary();
+            }
+
+            function renderWithdrawalHistory() {
+                if (!withdrawalList) return; // Ensure element exists
+
+                withdrawalList.innerHTML = '';
+                if (withdrawals.length === 0) {
+                    withdrawalList.innerHTML = `<tr><td colspan="3" class="text-center text-gray-500 py-4">Žádné zaznamenané výběry.</td></tr>`;
+                } else {
+                    withdrawals.forEach(withdrawal => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${withdrawal.date}</td>
+                            <td>$${withdrawal.amount.toFixed(2)}</td>
+                            <td>
+                                <button data-id="${withdrawal.id}" class="text-red-500 hover:text-red-700 font-semibold delete-withdrawal-btn">Smazat</button>
+                            </td>
+                        `;
+                        withdrawalList.appendChild(row);
+                    });
+                }
+                attachWithdrawalEventListeners();
+            }
+
+            // Attach event listeners for dynamically created elements
+            function attachEventListeners() {
+                document.querySelectorAll('.exit-strategy-input').forEach(input => {
+                    input.removeEventListener('change', handleExitStrategyChange);
+                    input.addEventListener('change', handleExitStrategyChange);
+                });
+                document.querySelectorAll('.sell-trade-btn').forEach(button => {
+                    button.removeEventListener('click', handleSellButtonClick);
+                    button.addEventListener('click', handleSellButtonClick);
+                });
+                document.querySelectorAll('.edit-trade-btn').forEach(button => {
+                    button.removeEventListener('click', handleEditButtonClick);
+                    button.addEventListener('click', handleEditButtonClick);
+                });
+                document.querySelectorAll('.delete-trade-btn').forEach(button => {
+                    button.removeEventListener('click', handleDeleteOpenTrade);
+                    button.addEventListener('click', handleDeleteOpenTrade);
+                });
+                document.querySelectorAll('.delete-trade-btn-closed').forEach(button => {
+                    button.removeEventListener('click', handleDeleteClosedTrade);
+                    button.addEventListener('click', handleDeleteClosedTrade);
+                });
+            }
+
+            function attachPlannedTradeEventListeners() {
+                document.querySelectorAll('.edit-planned-trade-btn').forEach(button => {
+                    button.removeEventListener('click', handleEditPlannedTrade);
+                    button.addEventListener('click', handleEditPlannedTrade);
+                });
+                document.querySelectorAll('.delete-planned-trade-btn').forEach(button => {
+                    button.removeEventListener('click', handleDeletePlannedTrade);
+                    button.addEventListener('click', handleDeletePlannedTrade);
+                });
+            }
+
+            function attachWithdrawalEventListeners() {
+                document.querySelectorAll('.delete-withdrawal-btn').forEach(button => {
+                    button.removeEventListener('click', handleDeleteWithdrawal);
+                    button.addEventListener('click', handleDeleteWithdrawal);
+                });
+            }
+
+            // Event Handlers
+            async function handleExitStrategyChange(event) {
+                if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                const tradeId = event.target.dataset.id; // Corrected to use data-id
+                const newExitStrategy = parseFloat(event.target.value);
+                const tradeRef = doc(db, `artifacts/${APP_ID}/users/${userId}/trades`, tradeId);
+
+                try {
+                    if (!isNaN(newExitStrategy) && newExitStrategy >= 0) {
+                        await updateDoc(tradeRef, { exitStrategy: newExitStrategy });
+                        showMessage('Exit Strategy aktualizována.', 'success');
+                    } else if (event.target.value === '') {
+                        await updateDoc(tradeRef, { exitStrategy: null });
+                        showMessage('Exit Strategy vymazána.', 'success');
+                    } else {
+                        showMessage('Zadejte prosím platnou kladnou hodnotu pro Exit Strategy, nebo nechte prázdné.', 'error');
+                    }
+                } catch (e) {
+                    console.error("Error updating exit strategy:", e);
+                    showMessage("Chyba při aktualizaci Exit Strategy.", "error");
+                }
+            }
+
+            function handleSellButtonClick(event) {
+                const tradeIdToSell = event.target.dataset.id;
+                currentTradeToSell = trades.find(t => t.id === tradeIdToSell && t.status === 'open');
+
+                if (currentTradeToSell) {
+                    if (modalSymbol) modalSymbol.textContent = currentTradeToSell.symbol;
+                    if (modalQuantity) modalQuantity.textContent = currentTradeToSell.quantity;
+                    if (modalSellPrice) modalSellPrice.value = '';
+                    if (modalSellFee) modalSellFee.value = (currentTradeToSell.buyFee || 0).toFixed(2);
+                    if (modalSellDate) modalSellDate.value = new Date().toISOString().slice(0, 10);
+                    if (sellModal) sellModal.classList.remove('hidden');
+                }
+            }
+
+            function handleEditButtonClick(event) {
+                const tradeIdToEdit = event.target.dataset.id;
+                const tradeToEdit = trades.find(t => t.id === tradeIdToEdit);
+
+                if (tradeToEdit) {
+                    if (editTradeId) editTradeId.value = tradeToEdit.id;
+                    if (editSymbol) editSymbol.value = tradeToEdit.symbol;
+                    if (editBuyPrice) editBuyPrice.value = tradeToEdit.buyPrice;
+                    if (editQuantity) editQuantity.value = tradeToEdit.quantity;
+                    if (editBuyFee) editBuyFee.value = tradeToEdit.buyFee || 0;
+                    if (editTradeDate) editTradeDate.value = tradeToEdit.date;
+
+                    if (tradeToEdit.status === 'closed') {
+                        if (editSellPriceGroup) editSellPriceGroup.classList.remove('hidden');
+                        if (editSellFeeGroup) editSellFeeGroup.classList.remove('hidden');
+                        if (editSellDateGroup) editSellDateGroup.classList.remove('hidden');
+                        if (editExitStrategyGroup) editExitStrategyGroup.classList.add('hidden');
+
+                        if (editSellPrice) editSellPrice.value = tradeToEdit.sellPrice || '';
+                        if (editSellFee) editSellFee.value = tradeToEdit.sellFee || 0;
+                        if (editSellDate) editSellDate.value = tradeToEdit.sellDate || '';
+                    } else {
+                        if (editSellPriceGroup) editSellPriceGroup.classList.add('hidden');
+                        if (editSellFeeGroup) editSellFeeGroup.classList.add('hidden');
+                        if (editSellDateGroup) editSellDateGroup.classList.add('hidden');
+                        if (editExitStrategyGroup) editExitStrategyGroup.classList.remove('hidden');
+                        if (editExitStrategy) editExitStrategy.value = tradeToEdit.exitStrategy !== null ? tradeToEdit.exitStrategy : '';
+                    }
+                    if (editModal) editModal.classList.remove('hidden');
+                }
+            }
+
+            async function handleDeleteOpenTrade(event) {
+                if (!userId) { showMessage("Uživatel není přihlášen. Data nelze smazat.", "error"); return; }
+                const tradeIdToDelete = event.target.dataset.id;
+                try {
+                    await deleteDoc(doc(db, `artifacts/${APP_ID}/users/${userId}/trades`, tradeIdToDelete));
+                    showMessage('Otevřený obchod byl úspěšně smazán.', 'success');
+                } catch (e) {
+                    console.error("Error deleting open trade:", e);
+                    showMessage("Chyba při mazání otevřeného obchodu.", "error");
+                }
+            }
+
+            async function handleDeleteClosedTrade(event) {
+                if (!userId) { showMessage("Uživatel není přihlášen. Data nelze smazat.", "error"); return; }
+                const tradeIdToDelete = event.target.dataset.id;
+                try {
+                    await deleteDoc(doc(db, `artifacts/${APP_ID}/users/${userId}/trades`, tradeIdToDelete));
+                    showMessage('Uzavřený obchod byl úspěšně smazán.', 'success');
+                } catch (e) {
+                    console.error("Error deleting closed trade:", e);
+                    showMessage("Chyba při mazání uzavřeného obchodu.", "error");
+                }
+            }
+
+            async function handleEditPlannedTrade(event) {
+                if (!userId) { showMessage("Uživatel není přihlášen.", "error"); return; }
+                const plannedTradeIdToEdit = event.target.dataset.id;
+                currentPlannedTradeToEdit = plannedTrades.find(pt => pt.id === plannedTradeIdToEdit);
+
+                if (currentPlannedTradeToEdit) {
+                    if (plannedCompanyInput) plannedCompanyInput.value = currentPlannedTradeToEdit.company;
+                    if (plannedEntryPriceInput) plannedEntryPriceInput.value = currentPlannedTradeToEdit.entryPrice;
+                    if (plannedExitPriceInput) plannedExitPriceInput.value = currentPlannedTradeToEdit.exitPrice;
+                    if (plannedQuantityInput) plannedQuantityInput.value = currentPlannedTradeToEdit.quantity;
+                    showMessage('Údaje plánovaného obchodu byly načteny do formuláře. Upravte a znovu uložte přes "Přidat Plánovaný Obchod".', 'info');
+                }
+            }
+
+            async function handleDeletePlannedTrade(event) {
+                if (!userId) { showMessage("Uživatel není přihlášen. Data nelze smazat.", "error"); return; }
+                const plannedTradeIdToDelete = event.target.dataset.id;
+                try {
+                    await deleteDoc(doc(db, `artifacts/${APP_ID}/users/${userId}/plannedTrades`, plannedTradeIdToDelete));
+                    showMessage('Plánovaný obchod byl úspěšně smazán.', 'success');
+                } catch (e) {
+                    console.error("Error deleting planned trade:", e);
+                    showMessage("Chyba při mazání plánovaného obchodu.", "error");
+                }
+            }
+
+            async function handleDeleteWithdrawal(event) {
+                if (!userId) { showMessage("Uživatel není přihlášen. Data nelze smazat.", "error"); return; }
+                const withdrawalIdToDelete = event.target.dataset.id;
+                try {
+                    await deleteDoc(doc(db, `artifacts/${APP_ID}/users/${userId}/withdrawals`, withdrawalIdToDelete));
+                    showMessage('Výběr byl úspěšně smazán.', 'success');
+                } catch (e) {
+                    console.error("Error deleting withdrawal:", e);
+                    showMessage("Chyba při mazání výběru.", "error");
+                }
+            }
+
+            // Initial setup
+            // No initial render calls here, as they will be triggered by onSnapshot listeners after Firebase init.
+
+            // NEW FUNCTION: Attach all event listeners to DOM elements
+            function attachAllEventListenersToDomElements() {
+                // Event listener for setting initial balance
+                if (setInitialBalanceBtn) {
+                    setInitialBalanceBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        const newInitialBalance = parseFloat(initialBalanceInput.value);
+                        if (isNaN(newInitialBalance) || newInitialBalance < 0) {
+                            showMessage('Zadejte prosím platný počáteční zůstatek (kladné číslo).', 'error');
+                            return;
+                        }
+                        try {
+                            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                            await setDoc(doc(db, `artifacts/${appId}/users/${userId}/initialBalance`, 'balance'), { amount: newInitialBalance });
+                            showMessage('Počáteční zůstatek byl úspěšně nastaven a uložen do cloudu.', 'success');
+                        } catch (e) {
+                            console.error("Error setting initial balance:", e);
+                            showMessage("Chyba při ukládání počátečního zůstatku do cloudu.", "error");
+                        }
+                    });
+                }
+
+
+                // Event listener for recording withdrawal
+                if (recordWithdrawalBtn) {
+                    recordWithdrawalBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        const amount = parseFloat(withdrawalAmountInput.value);
+                        if (isNaN(amount) || amount <= 0) {
+                            showMessage('Zadejte prosím platnou kladnou částku k výběru.', 'error');
+                            return;
+                        }
+
+                        let currentCalculatedAvailableBalance = initialBalance - withdrawals.reduce((sum, w) => sum + w.amount, 0) - trades.filter(t => t.status === 'open').reduce((sum, t) => sum + t.costBasis, 0);
+
+                        if (amount > currentCalculatedAvailableBalance) {
+                            showMessage(`Částka k výběru (${amount.toFixed(2)} USD) přesahuje dostupný zůstatek (${currentCalculatedAvailableBalance.toFixed(2)} USD).`, 'error');
+                            return;
+                        }
+
+                        try {
+                            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                            await addDoc(collection(db, `artifacts/${appId}/users/${userId}/withdrawals`), {
+                                amount: amount,
+                                date: new Date().toISOString().slice(0, 10),
+                                timestamp: new Date() // Add timestamp for ordering
+                            });
+                            withdrawalAmountInput.value = '';
+                            showMessage(`Výběr ${amount.toFixed(2)} USD byl zaznamenán a uložen do cloudu.`, 'success');
+                        } catch (e) {
+                            console.error("Error recording withdrawal:", e);
+                            showMessage("Chyba při ukládání výběru do cloudu.", "error");
+                        }
+                    });
+                }
+
+
+                // Event listener for "View Withdrawal History" button
+                if (viewWithdrawalHistoryBtn) {
+                    viewWithdrawalHistoryBtn.addEventListener('click', () => {
+                        renderWithdrawalHistory();
+                        if (withdrawalHistoryModal) withdrawalHistoryModal.classList.remove('hidden');
+                    });
+                }
+
+
+                // Event listener for "Close Withdrawal History" button
+                if (closeWithdrawalHistoryBtn) {
+                    closeWithdrawalHistoryBtn.addEventListener('click', () => {
+                        if (withdrawalHistoryModal) withdrawalHistoryModal.classList.add('hidden');
+                    });
+                }
+
+
+                // Event listener for adding a trade (main trades)
+                if (addTradeBtn) {
+                    addTradeBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        const symbol = tradeStockSymbol.value.trim().toUpperCase();
+                        const buyPrice = parseFloat(tradeBuyPrice.value);
+                        const quantity = parseInt(tradeQuantity.value);
+                        const buyFee = parseFloat(tradeBuyFee.value) || 0;
+                        const date = tradeDate.value;
+
+                        if (!symbol || isNaN(buyPrice) || isNaN(quantity) || !date || buyPrice <= 0 || quantity <= 0) {
+                            showMessage('Vyplňte prosím všechna pole pro obchod platnými hodnotami.', 'warning');
+                            return;
+                        }
+
+                        const costBasis = (buyPrice * quantity) + buyFee;
+                        let currentCalculatedAvailableBalance = initialBalance - withdrawals.reduce((sum, w) => sum + w.amount, 0) - trades.filter(t => t.status === 'open').reduce((sum, t) => sum + t.costBasis, 0);
+
+                        if (costBasis > currentCalculatedAvailableBalance) {
+                            showMessage(`Nedostatečný disponibilní zůstatek pro nákup. Potřebujete $${costBasis.toFixed(2)}, máte $${currentCalculatedAvailableBalance.toFixed(2)}.`, 'error');
+                            return;
+                        }
+
+                        const newTrade = {
+                            symbol,
+                            buyPrice,
+                            quantity,
+                            buyFee,
+                            date,
+                            status: 'open',
+                            costBasis: costBasis,
+                            exitStrategy: null,
+                            timestamp: new Date()
+                        };
+
+                        try {
+                            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                            await addDoc(collection(db, `artifacts/${appId}/users/${userId}/trades`), newTrade);
+                            if (tradeStockSymbol) tradeStockSymbol.value = '';
+                            if (tradeBuyPrice) tradeBuyPrice.value = '';
+                            if (tradeQuantity) tradeQuantity.value = '';
+                            if (tradeBuyFee) tradeBuyFee.value = '0';
+                            if (tradeDate) tradeDate.value = '';
+                            showMessage('Obchod byl úspěšně přidán a uložen do cloudu!', 'success');
+                        } catch (e) {
+                            console.error("Error adding trade:", e);
+                            showMessage("Chyba při ukládání obchodu do cloudu.", "error");
+                        }
+                    });
+                }
+
+
+                // Tab functionality
+                if (openTradesTab) {
+                    openTradesTab.addEventListener('click', () => {
+                        openTradesTab.classList.add('active');
+                        if (closedTradesTab) closedTradesTab.classList.remove('active');
+                        if (openTradesSection) openTradesSection.classList.remove('hidden');
+                        if (closedTradesSection) closedTradesSection.classList.add('hidden');
+                    });
+                }
+
+
+                if (closedTradesTab) {
+                    closedTradesTab.addEventListener('click', () => {
+                        closedTradesTab.classList.add('active');
+                        if (openTradesTab) openTradesTab.classList.remove('active');
+                        if (closedTradesSection) closedTradesSection.classList.remove('hidden');
+                        if (openTradesSection) openTradesSection.classList.add('hidden');
+                    });
+                }
+
+
+                // Cancel button for sell modal
+                if (cancelSellBtn) {
+                    cancelSellBtn.addEventListener('click', () => {
+                        if (sellModal) sellModal.classList.add('hidden');
+                        currentTradeToSell = null;
+                    });
+                }
+
+
+                // Confirm sell button for sell modal
+                if (confirmSellBtn) {
+                    confirmSellBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        const sellPrice = parseFloat(modalSellPrice.value);
+                        const sellFee = parseFloat(modalSellFee.value) || 0;
+                        const sellDate = modalSellDate.value;
+
+                        if (isNaN(sellPrice) || sellPrice <= 0) {
+                            showMessage('Neplatná prodejní cena.', 'error');
+                            return;
+                        }
+                        if (!sellDate) {
+                            showMessage('Datum prodeje je povinné.', 'error');
+                            return;
+                        }
+
+                        if (currentTradeToSell) {
+                            const tradeRef = doc(db, `artifacts/${APP_ID}/users/${userId}/trades`, currentTradeToSell.id);
+                            const grossProfit = (sellPrice - currentTradeToSell.buyPrice) * currentTradeToSell.quantity;
+                            const profitLoss = grossProfit - (currentTradeToSell.buyFee || 0) - (sellFee || 0);
+                            const tax = profitLoss > 0 ? profitLoss * 0.15 : 0;
+
+                            try {
+                                await updateDoc(tradeRef, {
+                                    sellPrice: sellPrice,
+                                    sellFee: sellFee,
+                                    sellDate: sellDate,
+                                    status: 'closed',
+                                    profitLoss: profitLoss,
+                                    tax: tax
+                                });
+                                showMessage('Obchod byl úspěšně uzavřen a uložen do cloudu.', 'success');
+                            } catch (e) {
+                                console.error("Error closing trade:", e);
+                                showMessage("Chyba při ukládání uzavřeného obchodu do cloudu.", "error");
+                            }
+                        }
+                        if (sellModal) sellModal.classList.add('hidden');
+                        currentTradeToSell = null;
+                    });
+                }
+
+
+                // Cancel button for edit modal
+                if (cancelEditBtn) {
+                    cancelEditBtn.addEventListener('click', () => {
+                        if (editModal) editModal.classList.add('hidden');
+                    });
+                }
+
+
+                // Confirm edit button for edit modal
+                if (confirmEditBtn) {
+                    confirmEditBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        const tradeId = editTradeId.value;
+                        const tradeRef = doc(db, `artifacts/${APP_ID}/users/${userId}/trades`, tradeId);
+                        const originalTrade = trades.find(t => t.id === tradeId);
+
+                        if (!originalTrade) {
+                            showMessage('Chyba: Obchod k úpravě nebyl nalezen.', 'error');
+                            return;
+                        }
+
+                        const symbol = editSymbol.value.trim().toUpperCase();
+                        const buyPrice = parseFloat(editBuyPrice.value);
+                        const quantity = parseInt(editQuantity.value);
+                        const buyFee = parseFloat(editBuyFee.value) || 0;
+                        const date = editTradeDate.value;
+
+                        if (!symbol || isNaN(buyPrice) || isNaN(quantity) || !date || buyPrice <= 0 || quantity <= 0) {
+                            showMessage('Vyplňte prosím všechna povinná pole platnými hodnotami.', 'warning');
+                            return;
+                        }
+
+                        const updatedFields = {
+                            symbol: symbol,
+                            buyPrice: buyPrice,
+                            quantity: quantity,
+                            buyFee: buyFee,
+                            date: date,
+                            costBasis: (buyPrice * quantity) + buyFee
+                        };
+
+                        if (originalTrade.status === 'closed') {
+                            const sellPrice = parseFloat(editSellPrice.value);
+                            const sellFee = parseFloat(editSellFee.value) || 0;
+                            const sellDate = editSellDate.value;
+
+                            if (isNaN(sellPrice) || sellPrice <= 0 || !sellDate) {
+                                showMessage('Vyplňte prosím platnou prodejní cenu a datum prodeje.', 'warning');
+                                return;
+                            }
+                            updatedFields.sellPrice = sellPrice;
+                            updatedFields.sellFee = sellFee;
+                            updatedFields.sellDate = sellDate;
+                            const grossProfit = (sellPrice - updatedFields.buyPrice) * updatedFields.quantity;
+                            updatedFields.profitLoss = grossProfit - (updatedFields.buyFee || 0) - (updatedFields.sellFee || 0);
+                            updatedFields.tax = updatedFields.profitLoss > 0 ? updatedFields.profitLoss * 0.15 : 0;
+                        } else {
+                            const exitStrategy = parseFloat(editExitStrategy.value);
+                            updatedFields.exitStrategy = isNaN(exitStrategy) ? null : exitStrategy;
+                        }
+
+                        try {
+                            await updateDoc(tradeRef, updatedFields);
+                            showMessage('Obchod byl úspěšně upraven a uložen do cloudu.', 'success');
+                        } catch (e) {
+                            console.error("Error updating trade:", e);
+                            showMessage("Chyba při ukládání úprav obchodu do cloudu.", "error");
+                        }
+                        if (editModal) editModal.classList.add('hidden');
+                    });
+                }
+
+
+                // Event listener for "Přidat Plánovaný Obchod" button
+                if (addPlannedTradeBtn) {
+                    addPlannedTradeBtn.addEventListener('click', () => {
+                        const company = plannedCompanyInput.value.trim();
+                        const entryPrice = parseFloat(plannedEntryPriceInput.value);
+                        const exitPrice = parseFloat(plannedExitPriceInput.value);
+                        const quantity = parseInt(plannedQuantityInput.value);
+
+                        if (!company || isNaN(entryPrice) || isNaN(exitPrice) || isNaN(quantity) || entryPrice <= 0 || exitPrice <= 0 || quantity <= 0) {
+                            showMessage('Vyplňte prosím všechna pole pro plánovaný obchod platnými hodnotami.', 'warning');
+                            return;
+                        }
+
+                        const investedAmountForPlannedTrade = entryPrice * quantity;
+                        let currentAvailableForPlannedInvestment = initialBalance - withdrawals.reduce((sum, w) => sum + w.amount, 0) - trades.filter(t => t.status === 'open').reduce((sum, t) => sum + t.costBasis, 0) - plannedTrades.reduce((sum, pt) => sum + (pt.entryPrice * pt.quantity || 0), 0);
+
+                        if (investedAmountForPlannedTrade > currentAvailableForPlannedInvestment) {
+                            showMessage(`Plánovaná investovaná částka (${investedAmountForPlannedTrade.toFixed(2)} USD) přesahuje dostupný kapitál k plánování/investování (${currentAvailableForPlannedInvestment.toFixed(2)} USD).`, 'error');
+                            return;
+                        }
+
+                        currentPlannedTradeToEdit = {
+                            id: currentPlannedTradeToEdit ? currentPlannedTradeToEdit.id : crypto.randomUUID(),
+                            company,
+                            entryPrice,
+                            exitPrice,
+                            quantity,
+                            investedAmount: investedAmountForPlannedTrade,
+                            answers: currentPlannedTradeToEdit ? currentPlannedTradeToEdit.answers : {}
+                        };
+
+                        renderQuestionsInModal();
+                        if (plannedTradeQuestionsModal) plannedTradeQuestionsModal.classList.remove('hidden');
+                    });
+                }
+
+
+                // Render questions in the planned trade questions modal
+                function renderQuestionsInModal() {
+                    if (!questionsContainer) return; // Ensure element exists
+
+                    questionsContainer.innerHTML = '';
+                    tradeQuestions.forEach(q => {
+                        const questionDiv = document.createElement('div');
+                        questionDiv.className = 'mb-2';
+                        questionDiv.innerHTML = `
+                            <p class="text-gray-800">${q.text}</p>
+                            <div class="flex items-center gap-4 mt-1">
+                                <label class="inline-flex items-center">
+                                    <input type="radio" class="form-radio text-blue-600" name="question-${q.id}" value="Ano" ${currentPlannedTradeToEdit && currentPlannedTradeToEdit.answers[q.id] === 'Ano' ? 'checked' : ''}>
+                                    <span class="ml-2 text-gray-700">Ano</span>
+                                </label>
+                                <label class="inline-flex items-center">
+                                    <input type="radio" class="form-radio text-red-600" name="question-${q.id}" value="Ne" ${currentPlannedTradeToEdit && currentPlannedTradeToEdit.answers[q.id] === 'Ne' ? 'checked' : ''}>
+                                    <span class="ml-2 text-gray-700">Ne</span>
+                                </label>
+                            </div>
+                        `;
+                        questionsContainer.appendChild(questionDiv);
+                    });
+                }
+
+                // Event listener for "Potvrdit a Uložit" in planned trade questions modal
+                if (confirmQuestionsBtn) {
+                    confirmQuestionsBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        let allAnsweredYes = true;
+                        const answers = {};
+                        tradeQuestions.forEach(q => {
+                            const selected = document.querySelector(`input[name="question-${q.id}"]:checked`);
+                            if (!selected || selected.value !== 'Ano') {
+                                allAnsweredYes = false;
+                            }
+                            answers[q.id] = selected ? selected.value : null;
+                        });
+
+                        if (!allAnsweredYes) {
+                            showMessage('Musíte odpovědět "Ano" na všechny otázky, abyste mohli uložit plánovaný obchod.', 'error');
+                            return;
+                        }
+
+                        currentPlannedTradeToEdit.answers = answers;
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                        try {
+                            if (plannedTrades.some(pt => pt.id === currentPlannedTradeToEdit.id)) {
+                                const plannedTradeRef = doc(db, `artifacts/${appId}/users/${userId}/plannedTrades`, currentPlannedTradeToEdit.id);
+                                await setDoc(plannedTradeRef, currentPlannedTradeToEdit);
+                                showMessage('Plánovaný obchod byl úspěšně upraven a uložen do cloudu.', 'success');
+                            } else {
+                                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/plannedTrades`), currentPlannedTradeToEdit);
+                                showMessage('Plánovaný obchod byl úspěšně přidán a uložen do cloudu!', 'success');
+                            }
+                        } catch (e) {
+                            console.error("Error saving planned trade:", e);
+                            showMessage("Chyba při ukládání plánovaného obchodu do cloudu.", "error");
+                        }
+
+                        if (plannedTradeQuestionsModal) plannedTradeQuestionsModal.classList.add('hidden');
+                        if (plannedCompanyInput) plannedCompanyInput.value = '';
+                        if (plannedEntryPriceInput) plannedEntryPriceInput.value = '';
+                        if (plannedExitPriceInput) plannedExitPriceInput.value = '';
+                        if (plannedQuantityInput) plannedQuantityInput.value = '';
+                        currentPlannedTradeToEdit = null;
+                    });
+                }
+
+
+                // Event listener for "Zrušit" in planned trade questions modal
+                if (cancelQuestionsBtn) {
+                    cancelQuestionsBtn.addEventListener('click', () => {
+                        if (plannedTradeQuestionsModal) plannedTradeQuestionsModal.classList.add('hidden');
+                        currentPlannedTradeToEdit = null;
+                    });
+                }
+
+
+                // Event listener for "Spravovat Otázky" button
+                if (manageQuestionsBtn) {
+                    manageQuestionsBtn.addEventListener('click', () => {
+                        renderManageQuestionsModal();
+                        if (manageQuestionsModal) manageQuestionsModal.classList.remove('hidden');
+                    });
+                }
+
+
+                // Render questions in the manage questions modal
+                function renderManageQuestionsModal() {
+                    if (!currentQuestionsList) return; // Ensure element exists
+
+                    currentQuestionsList.innerHTML = '';
+                    tradeQuestions.forEach(q => {
+                        const questionItemDiv = document.createElement('div');
+                        questionItemDiv.className = 'question-item';
+                        questionItemDiv.innerHTML = `
+                            <input type="text" class="question-input" data-question-id="${q.id}" value="${q.text}">
+                            <button data-question-id="${q.id}" class="text-red-500 hover:text-red-700 font-semibold ml-4 remove-question-btn">Smazat</button>
+                        `;
+                        currentQuestionsList.appendChild(questionItemDiv);
+                    });
+
+                    document.querySelectorAll('.remove-question-btn').forEach(button => {
+                        button.removeEventListener('click', handleRemoveQuestion);
+                        button.addEventListener('click', handleRemoveQuestion);
+                    });
+                }
+
+                // Event handler for removing a question
+                async function handleRemoveQuestion(event) {
+                    if (!userId) { showMessage("Uživatel není přihlášen. Data nelze smazat.", "error"); return; }
+                    const questionIdToRemove = event.target.dataset.questionId;
+                    const updatedQuestions = tradeQuestions.filter(q => q.id !== questionIdToRemove);
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                    try {
+                        await setDoc(doc(db, `artifacts/${appId}/users/${userId}/tradeQuestions`, 'questions'), { list: updatedQuestions });
+                        showMessage('Otázka byla smazána a změny uloženy.', 'success');
+                    } catch (e) {
+                        console.error("Error deleting question:", e);
+                        showMessage("Chyba při mazání otázky.", "error");
+                    }
+                }
+
+                // Event listener for "Přidat Otázku" button in manage questions modal
+                if (addNewQuestionBtn) {
+                    addNewQuestionBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        const newQuestionText = newQuestionInput.value.trim();
+                        if (newQuestionText) {
+                            const newQuestion = { id: crypto.randomUUID(), text: newQuestionText };
+                            const updatedQuestions = [...tradeQuestions, newQuestion];
+                            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                            try {
+                                await setDoc(doc(db, `artifacts/${appId}/users/${userId}/tradeQuestions`, 'questions'), { list: updatedQuestions });
+                                if (newQuestionInput) newQuestionInput.value = '';
+                                showMessage('Nová otázka byla přidána a uložena.', 'success');
+                            } catch (e) {
+                                console.error("Error adding new question:", e);
+                                showMessage("Chyba při přidávání nové otázky.", "error");
+                            }
+                        } else {
+                            showMessage('Prosím zadejte text nové otázky.', 'warning');
+                        }
+                    });
+                }
+
+
+                // Event listener for "Uložit Změny" in manage questions modal
+                if (saveQuestionsBtn) {
+                    saveQuestionsBtn.addEventListener('click', async () => {
+                        if (!userId) { showMessage("Uživatel není přihlášen. Data nelze uložit.", "error"); return; }
+                        const updatedQuestionsList = [];
+                        document.querySelectorAll('#currentQuestionsList .question-input').forEach(input => {
+                            const questionId = input.dataset.questionId;
+                            const updatedText = input.value.trim();
+                            updatedQuestionsList.push({ id: questionId, text: updatedText });
+                        });
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                        try {
+                            await setDoc(doc(db, `artifacts/${appId}/users/${userId}/tradeQuestions`, 'questions'), { list: updatedQuestionsList });
+                            if (manageQuestionsModal) manageQuestionsModal.classList.add('hidden');
+                            showMessage('Změny otázek byly uloženy do cloudu.', 'success');
+                        } catch (e) {
+                            console.error("Error saving questions changes:", e);
+                            showMessage("Chyba při ukládání změn otázek do cloudu.", "error");
+                        }
+                    });
+                }
+
+
+                // Event listener for "Zrušit" in manage questions modal
+                if (cancelManageQuestionsBtn) {
+                    cancelManageQuestionsBtn.addEventListener('click', () => {
+                        if (manageQuestionsModal) manageQuestionsModal.classList.add('hidden');
+                        renderManageQuestionsModal();
+                    });
+                }
+
+            } // End of attachAllEventListenersToDomElements function
+
+        }); // End of DOMContentLoaded
+    </script>
+</body>
+</html>
